@@ -1,0 +1,31 @@
+# Core
+pandas==2.1.4
+numpy==1.26.2
+requests==2.31.0
+python-dotenv==1.0.0
+
+# Financial Data
+yfinance==1.7.0
+alpha-vantage==2.3.1
+
+# Database
+# Airflow 2.8.1 requires SQLAlchemy 1.4 (not 2.x). Code uses future=True, which 1.4 supports.
+sqlalchemy==1.4.52
+psycopg2-binary==2.9.9
+
+# Orchestration
+apache-airflow==2.8.1
+python-dateutil>=2.8.2,<3.0
+
+# Visualization
+matplotlib==3.8.2
+plotly==5.18.0
+jupyter==1.0.0
+notebook==7.0.6
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Optional: MongoDB
+# pymongo==4.6.1
