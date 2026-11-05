@@ -1,0 +1,75 @@
+flowchart LR
+    E1["E1 · Financial Data API<br/>Alpha Vantage / yfinance"]
+    E2["E2 · Scheduler / Operator<br/>Airflow · CLI"]
+    E3["E3 · Analyst<br/>SQL · notebooks"]
+
+    subgraph PROC["Processes"]
+        P0(["P0 · Orchestrate & audit<br/>run_pipeline()"])
+        P1(["P1 · Extract"])
+        P2(["P2 · Validate"])
+        P3(["P3 · Transform"])
+        P4(["P4 · Load"])
+        P5(["P5 · Quality Check"])
+    end
+
+    subgraph FILES["Intermediate files · raw_data/ (not database tables)"]
+        D1[["D1 · Raw JSON files<br/>SYMBOL_UTC.json"]]
+        D2[["D2 · _staging.csv<br/>batch OHLCV"]]
+        D3[["D3 · _metrics.csv<br/>metric rows"]]
+    end
+
+    subgraph TABLES["Persistent PostgreSQL tables"]
+        D4[("D4 · raw_market_data")]
+        D5[("D5 · transformed_market_data")]
+        D6[("D6 · pipeline_runs")]
+    end
+
+    E1 -->|"OHLCV daily bars + HTTP status"| P1
+    E2 -->|"Airflow task trigger"| P1
+    E2 -->|"CLI: python pipeline.py"| P0
+    P0 -->|"start task chain (CLI)"| P1
+
+    D4 -->|"MAX(trade_date) per-symbol watermark"| P1
+    P1 -->|"vendor payload per symbol (write-only archive)"| D1
+    P1 -->|"standardized staging batch"| D2
+
+    D2 -->|"staging rows"| P2
+    P2 -->|"validated staging path"| P3
+    D2 -->|"staging rows"| P3
+    D4 -->|"stored OHLCV history"| P3
+    P3 -->|"metrics for staging keys"| D3
+
+    D2 -->|"raw rows"| P4
+    D3 -->|"metric rows"| P4
+    P4 -->|"INSERT · ON CONFLICT DO NOTHING"| D4
+    P4 -->|"UPSERT · ON CONFLICT DO UPDATE"| D5
+
+    D4 -->|"row counts · duplicate keys · null closes"| P5
+    D5 -->|"row counts · orphan keys"| P5
+    P5 -->|"CLI: quality counts / error"| P0
+
+    P1 -.->|"CLI: NO_NEW_DATA or ExtractionError"| P0
+    P2 -.->|"CLI: validation ValueError"| P0
+    P3 -.->|"CLI: transform exception"| P0
+    P4 -.->|"CLI: load / database exception"| P0
+    P0 -->|"CLI audit: status · counts · duration · error"| D6
+    P0 -->|"run result / logs"| E2
+
+    D4 -->|"price queries"| E3
+    D5 -->|"metric queries"| E3
+    D6 -->|"run history"| E3
+
+    NOTE["CLI path: P0 invokes P1 → P2 → P3 → P4 → P5 in order and writes pipeline_runs.<br/>Airflow path: Scheduler/Operator triggers the five task callables directly; Airflow owns task state."]
+    P0 -.- NOTE
+
+    classDef external fill:#f5f5f5,stroke:#666,stroke-width:1px
+    classDef process fill:#e8f0fe,stroke:#3b6fb6,stroke-width:1px
+    classDef file fill:#fff4d6,stroke:#c99a00,stroke-width:1px
+    classDef table fill:#e6f4ea,stroke:#2e7d32,stroke-width:1px
+    classDef note fill:#fffbe6,stroke:#999,stroke-dasharray:3 3
+
+    class E1,E2,E3 external
+    class P0,P1,P2,P3,P4,P5 process
+    class D1,D2,D3 file
+    class D4,D5,D6 table
+    class NOTE note

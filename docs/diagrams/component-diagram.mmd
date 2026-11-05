@@ -1,0 +1,91 @@
+flowchart TB
+    subgraph DAG["dags/"]
+        DAGF["financial_pipeline_dag.py<br/>extract >> validate >> transform >> load >> quality_check"]
+    end
+
+    subgraph PIPE["pipeline.py"]
+        RP["run_pipeline()"]
+        ET["extract_task()"]
+        VT["validate_task()"]
+        TT["transform_task()"]
+        LT["load_task()"]
+        QT["quality_check_task()"]
+    end
+
+    subgraph EXTRACT["ingestion/"]
+        EX["extractor.run_extraction()<br/>ExtractionError"]
+        AC["api_client.fetch_daily()<br/>fetch_alpha_vantage() / fetch_yfinance()<br/>validate_http_response()<br/>parse_alpha_vantage_payload()<br/>save_raw_json() / _retry_call()<br/>APIClientError / PayloadValidationError"]
+        IN["incremental.get_last_loaded_date()<br/>incremental.next_start_date()"]
+    end
+
+    subgraph TRANSFORM["transform/"]
+        SM["staged_metrics.compute_metrics_for_staging()<br/>combine_history_and_staging()<br/>staging_keys()"]
+        CL["cleaner.clean_data()"]
+        CA["calculator.calculate_metrics()"]
+        QU["quality.run_quality_checks()"]
+    end
+
+    subgraph DATABASE["database/"]
+        DBC["db_connector.get_engine()<br/>db_connector.ping()"]
+        LD["loader.load_raw()<br/>loader.load_transformed()<br/>loader.fetch_raw_for_symbols()<br/>loader.load_to_db() (convenience wrapper)"]
+        AUD["loader.start_pipeline_run()<br/>loader.finish_pipeline_run()"]
+    end
+
+    subgraph SHARED["config/ and utils/"]
+        CFG["settings.py<br/>DATA_SOURCE · SYMBOLS · RAW_DATA_DIR<br/>database_url() · validation helpers"]
+        LOG["logger.get_logger()"]
+    end
+
+    STG[["_staging.csv<br/>intermediate"]]
+    MET[["_metrics.csv<br/>intermediate"]]
+
+    DAGF --> ET
+    DAGF --> VT
+    DAGF --> TT
+    DAGF --> LT
+    DAGF --> QT
+
+    RP --> ET
+    RP --> VT
+    RP --> TT
+    RP --> LT
+    RP --> QT
+    RP --> AUD
+
+    ET --> EX
+    EX --> AC
+    EX --> IN
+    ET -->|writes| STG
+    STG -->|reads| VT
+    STG -->|reads| TT
+    STG -->|reads| LT
+
+    TT --> SM
+    TT -->|history read| LD
+    SM --> CL
+    SM --> CA
+    SM -->|writes| MET
+    MET -->|reads| LT
+
+    LT --> LD
+    QT --> QU
+
+    IN --> DBC
+    LD --> DBC
+    AUD --> DBC
+    QU --> DBC
+
+    AC --> CFG
+    IN --> CFG
+    DBC --> CFG
+    EX --> LOG
+    LD --> LOG
+    QU --> LOG
+
+    classDef module fill:#e8f0fe,stroke:#3b6fb6,stroke-width:1px
+    classDef file fill:#fff4d6,stroke:#c99a00,stroke-width:1px
+    classDef shared fill:#f5f5f5,stroke:#666,stroke-width:1px
+
+    class ET,VT,TT,LT,QT,RP,EX,AC,IN,SM,CL,CA,QU,DBC,LD,AUD,DAGF module
+    class STG,MET file
+    class CFG,LOG shared

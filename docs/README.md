@@ -13,6 +13,8 @@ All documents in this folder are required by **DEPI Project Documentation Guidel
 
 **Out of scope for this pipeline (UI product):** Figma screens, live consumer app URL. The “UI” for this project is Airflow, pgAdmin, and Jupyter notebooks.
 
+Diagram sources and rendered exports are indexed in [diagrams/README.md](./diagrams/README.md).
+
 Placeholders still needed from the team:
 
 - Institutional emails in [03_task_assignment_and_roles.md](./03_task_assignment_and_roles.md)

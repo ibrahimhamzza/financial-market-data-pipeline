@@ -30,7 +30,9 @@ financial-market-data-pipeline/
 ├── transform/                   # Data cleaning & financial calculations
 │   ├── __init__.py
 │   ├── cleaner.py               # Null handling, deduplication, type casting
-│   └── calculator.py           # Daily returns, moving averages, volume stats
+│   ├── calculator.py            # Daily returns, moving averages, volume stats
+│   ├── staged_metrics.py        # Metrics for the staging batch using stored history
+│   └── quality.py               # Post-load database quality checks
 │
 ├── database/                    # PostgreSQL interaction
 │   ├── __init__.py
@@ -47,7 +49,10 @@ financial-market-data-pipeline/
 │   ├── __init__.py
 │   ├── test_api_client.py
 │   ├── test_cleaner.py
-│   └── test_calculator.py
+│   ├── test_calculator.py
+│   ├── test_config_validation.py
+│   ├── test_extraction_pipeline_failure.py
+│   └── test_staged_metrics.py
 │
 ├── notebooks/                   # Jupyter notebooks (analysis & reporting)
 │   ├── data_quality_report.ipynb
@@ -61,7 +66,9 @@ financial-market-data-pipeline/
 │   ├── __init__.py
 │   └── settings.py             # Loads environment variables
 │
-├── raw_data/                    # Raw JSON files saved per API call
+├── raw_data/                    # Raw JSON files + batch staging/metrics CSVs
+│   ├── _staging.csv             # Extract output (ephemeral)
+│   ├── _metrics.csv             # Transform output (ephemeral)
 │   └── .gitkeep
 │
 ├── docs/                        # DEPI documentation (upload to GitHub)
@@ -74,8 +81,12 @@ financial-market-data-pipeline/
 │   ├── 06_literature_review.md
 │   ├── 07_requirements_gathering.md
 │   ├── 08_system_analysis_and_design.md
-│   └── 09_api_research.md
+│   ├── 09_api_research.md
+│   └── diagrams/                # Mermaid sources + SVG/PNG exports
+│       ├── *.mmd
+│       └── exports/
 │
+├── pipeline.py                  # Five-task orchestration for CLI and Airflow
 ├── .env.example                 # Template for environment variables (safe to commit)
 ├── .gitignore
 ├── requirements.txt
@@ -87,39 +98,21 @@ financial-market-data-pipeline/
 
 ## 🏗️ Architecture
 
-```
-                        ┌─────────────────────────────────────┐
-                        │         Apache Airflow DAG           │
-                        │  (Scheduled: weekdays after market   │
-                        │   close — 0 18 * * 1-5)             │
-                        └──────────────┬──────────────────────┘
-                                       │ orchestrates
-         ┌─────────────────────────────▼──────────────────────────────┐
-         │                                                              │
-  ┌──────▼──────┐   ┌────────────┐   ┌──────────────┐   ┌──────────┐ │
-  │  Extract    │──▶│  Validate  │──▶│  Transform   │──▶│   Load   │ │
-  │ (API call)  │   │ (HTTP +    │   │ (clean +     │   │ (to DB)  │ │
-  │             │   │  payload)  │   │  calculate)  │   │          │ │
-  └──────┬──────┘   └────────────┘   └──────────────┘   └────┬─────┘ │
-         │                                                     │       │
-         └──────────────────────────────────────────────────  │       │
-                                                               │       │
-         ▼                           ┌─────────────────────────▼──────┘
-  ┌─────────────┐                   │
-  │  raw_data/  │             ┌─────▼──────────────────────────────┐
-  │  (JSON files│             │          PostgreSQL Database         │
-  │  on disk)   │             │                                     │
-  └─────────────┘             │  raw_market_data     (raw OHLCV)   │
-                              │  transformed_market_data (metrics) │
-                              │  pipeline_runs       (audit log)   │
-                              └─────────────────────────────────────┘
-                                              │
-                              ┌───────────────▼──────────────────────┐
-                              │     Analytics Layer                   │
-                              │  SQL Views · Window Functions · CTEs  │
-                              │  Jupyter Notebooks · Visualizations   │
-                              └──────────────────────────────────────┘
-```
+The Airflow DAG runs five tasks in order: **extract → validate → transform → load → quality_check**.
+
+![System architecture](docs/diagrams/exports/system-architecture.png)
+
+Canonical source: [system-architecture.mmd](docs/diagrams/system-architecture.mmd) · [SVG export](docs/diagrams/exports/system-architecture.svg) · [Level-1 DFD](docs/diagrams/dfd-level-1.mmd) · [all diagram sources](docs/diagrams/README.md)
+
+| Task | What it does | Output |
+|------|--------------|--------|
+| **Extract** | Reads the per-symbol watermark, fetches daily bars, validates the API HTTP response and payload, and saves the vendor JSON. | `raw_data/*.json` and `raw_data/_staging.csv` |
+| **Validate** | Checks the staging CSV is non-empty, has the required OHLCV columns, and has no null `symbol` or `trade_date`. This is separate from API response validation. | Validated staging file |
+| **Transform** | Combines staging with stored raw history, cleans the data, calculates metrics, and keeps only staging keys. It does not write to the database. | `raw_data/_metrics.csv` |
+| **Load** | Inserts raw rows with `ON CONFLICT DO NOTHING` and upserts transformed metrics with `ON CONFLICT DO UPDATE`. | `raw_market_data` and `transformed_market_data` rows |
+| **Quality Check** | Queries both tables for counts, duplicate raw keys, null closes, and orphan transformed rows. | Logged check counts; raises on duplicates or orphans |
+
+If extraction reports no new data (every symbol returns an empty frame without error), `pipeline.extract_task()` returns `NO_NEW_DATA` and removes stale `_staging.csv` / `_metrics.csv` files. The `run_pipeline()` CLI path records the run as a success with zero rows and skips downstream tasks; Airflow still schedules the remaining tasks, which self-skip when the staging file is absent. Any symbol failure — including a partial failure — raises `ExtractionError`, so the run fails and no staging file is written; `fetch_yfinance()` treats an empty download as a symbol failure rather than no-new-data. See [docs/08_system_analysis_and_design.md](./docs/08_system_analysis_and_design.md#8-error-handling-policy) for the full policy.
 
 ---
 
@@ -327,6 +320,7 @@ Planning, literature review, and requirements are in [`docs/`](./docs/README.md)
 | Requirements | [docs/07_requirements_gathering.md](./docs/07_requirements_gathering.md) |
 | System analysis & design | [docs/08_system_analysis_and_design.md](./docs/08_system_analysis_and_design.md) |
 | API research | [docs/09_api_research.md](./docs/09_api_research.md) |
+| Diagram sources & exports | [docs/diagrams/README.md](./docs/diagrams/README.md) |
 
 ---
 

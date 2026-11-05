@@ -1,0 +1,54 @@
+flowchart TD
+    START(["start: Airflow task chain or run_pipeline()"]) --> RECORD{"run_pipeline()<br/>CLI path?"}
+    RECORD -->|yes| RUNSTART["start_pipeline_run()<br/>INSERT pipeline_runs status=running"]
+    RECORD -->|"no · Airflow task chain"| EXT
+    RUNSTART --> EXT
+
+    EXT["extract_task()"] --> MORE{"More configured<br/>symbols?"}
+    MORE -->|yes| WM["incremental.next_start_date()<br/>SELECT MAX(trade_date)"]
+    WM --> FETCH["api_client.fetch_daily()<br/>retry connection / timeout / API errors"]
+    FETCH --> API_OK{"HTTP and payload<br/>valid?"}
+    API_OK -->|"no · retries left"| FETCH
+    API_OK -->|"no · retries exhausted"| SYMERR["Record symbol error<br/>continue loop"]
+    API_OK -->|yes| EMPTY{"Frame empty?"}
+    EMPTY -->|yes| NOROW["Log no new rows for symbol"]
+    EMPTY -->|no| APPEND["Append standardized frame"]
+    SYMERR --> MORE
+    NOROW --> MORE
+    APPEND --> MORE
+
+    MORE -->|no| ERRORS{"Any symbol<br/>errors?"}
+    ERRORS -->|"yes · partial or all"| XFAIL["run_extraction() raises ExtractionError<br/>extract_task() re-raises"]
+    ERRORS -->|no| ANYROWS{"Any rows<br/>collected?"}
+    ANYROWS -->|no| NODATA["run_extraction() sets attrs['no_new_data']<br/>extract_task() removes stale<br/>_staging.csv and _metrics.csv<br/>returns NO_NEW_DATA"]
+    ANYROWS -->|yes| STAGE["extract_task() writes _staging.csv<br/>returns staging path"]
+
+    XFAIL --> FAIL["Exception propagates<br/>pipeline failed"]
+    NODATA --> NODONE(["NO_NEW_DATA success · 0 rows<br/>downstream skipped (CLI) / self-skip (Airflow)"])
+    STAGE --> VALID{"validate_task()<br/>non-empty, required columns,<br/>no null symbol / trade_date?"}
+    VALID -->|no| VFAIL["ValueError<br/>pipeline failed"]
+    VALID -->|yes| TRANSFORM["transform_task()<br/>read staging + raw history<br/>clean + calculate metrics<br/>write _metrics.csv"]
+    TRANSFORM -->|"exception · missing columns<br/>or history-read failure"| TFAIL["Exception<br/>pipeline failed"]
+    TRANSFORM --> LOAD["load_task()<br/>INSERT raw ON CONFLICT DO NOTHING<br/>UPSERT transformed"]
+    LOAD -->|"database error"| LFAIL["Exception<br/>pipeline failed"]
+    LOAD --> QUALITY{"quality_check_task()<br/>duplicates = 0 and<br/>orphans = 0?"}
+    QUALITY -->|"no · duplicates or orphans"| QFAIL["ValueError<br/>pipeline failed after load committed"]
+    QUALITY -->|yes| DONE([all tasks succeeded])
+
+    FAIL --> FIN["run_pipeline() records<br/>finish_pipeline_run(status=failed)<br/>and re-raises; Airflow marks task failed"]
+    VFAIL --> FIN
+    TFAIL --> FIN
+    LFAIL --> FIN
+    QFAIL --> FIN
+    NODONE --> FIN_OK["finish_pipeline_run(status=success)<br/>or Airflow success state"]
+    DONE --> FIN_OK
+    FIN --> END([end])
+    FIN_OK --> END
+
+    classDef decision fill:#fff4d6,stroke:#c99a00,stroke-width:1px
+    classDef failure fill:#fdecea,stroke:#c62828,stroke-width:1px
+    classDef success fill:#e6f4ea,stroke:#2e7d32,stroke-width:1px
+
+    class RECORD,MORE,API_OK,EMPTY,ERRORS,ANYROWS,VALID,QUALITY decision
+    class XFAIL,FAIL,VFAIL,TFAIL,LFAIL,QFAIL failure
+    class NODATA,NODONE,DONE,FIN_OK success

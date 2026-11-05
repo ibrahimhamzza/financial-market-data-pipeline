@@ -1,0 +1,37 @@
+erDiagram
+    RAW_MARKET_DATA {
+        serial id PK
+        varchar symbol
+        date trade_date
+        numeric open_price
+        numeric high_price
+        numeric low_price
+        numeric close_price
+        bigint volume
+        timestamp loaded_at
+    }
+    TRANSFORMED_MARKET_DATA {
+        serial id PK
+        varchar symbol
+        date trade_date
+        numeric close_price
+        numeric daily_return
+        numeric ma_7
+        numeric ma_20
+        numeric ma_50
+        numeric avg_volume_7d
+        numeric volume_ratio
+        numeric cumulative_return
+        numeric volatility_20d
+        timestamp loaded_at
+    }
+    PIPELINE_RUNS {
+        serial id PK
+        timestamp run_date
+        varchar status
+        int symbols_processed
+        int rows_inserted
+        numeric duration_seconds
+        text error_message
+    }
+    RAW_MARKET_DATA ||--o| TRANSFORMED_MARKET_DATA : "0..1 derived row per symbol + trade_date"

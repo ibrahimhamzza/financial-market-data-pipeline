@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> running: start_pipeline_run()<br/>INSERT pipeline_runs
+    running --> success: all tasks complete<br/>quality checks pass
+    running --> success: NO_NEW_DATA<br/>0 rows · downstream skipped or self-skipped
+    running --> failed: ExtractionError<br/>partial or all symbols
+    running --> failed: validation ValueError
+    running --> failed: transform exception<br/>clean / calculate / history read
+    running --> failed: load or database exception
+    running --> failed: quality ValueError<br/>duplicates or orphans · load already committed
+    success --> [*]
+    failed --> [*]
+
+    note right of running
+        If start_pipeline_run() fails,
+        no pipeline_runs row is written;
+        the pipeline logs a warning and continues.
+    end note
+
+    note left of failed
+        Airflow task states are separate.
+        Airflow does not update pipeline_runs.
+    end note
