@@ -1,7 +1,7 @@
 # 📈 Financial Market Data Pipeline
 
 > **DEPI Graduation Project — Data Engineering Track**
-> An automated, end-to-end pipeline that collects historical and live stock market data from a financial REST API, validates and transforms it, stores it in PostgreSQL, and schedules everything with Apache Airflow.
+> An automated, end-to-end pipeline that collects daily stock market data from Alpha Vantage’s official REST API or the third-party yfinance library, validates and transforms it, stores it in PostgreSQL, and schedules everything with Apache Airflow.
 
 ---
 
@@ -54,9 +54,7 @@ financial-market-data-pipeline/
 │   ├── test_extraction_pipeline_failure.py
 │   └── test_staged_metrics.py
 │
-├── notebooks/                   # Jupyter notebooks (analysis & reporting)
-│   ├── data_quality_report.ipynb
-│   └── market_analysis.ipynb
+├── notebooks/                   # Jupyter notebooks (planned; directory currently empty)
 │
 ├── utils/                       # Shared utilities
 │   ├── __init__.py
@@ -90,7 +88,6 @@ financial-market-data-pipeline/
 ├── .env.example                 # Template for environment variables (safe to commit)
 ├── .gitignore
 ├── requirements.txt
-├── docker-compose.yml           # Optional: containerized setup
 └── README.md
 ```
 
@@ -99,6 +96,8 @@ financial-market-data-pipeline/
 ## 🏗️ Architecture
 
 The Airflow DAG runs five tasks in order: **extract → validate → transform → load → quality_check**.
+
+**Data-source default:** `config/settings.py` uses **yfinance** when `DATA_SOURCE` is not set. yfinance is the runtime default for development, tests, and scheduled runs that do not override it. **Alpha Vantage** is the supported official REST API path used for the DEPI “consume an API” requirement and demonstrations. Only `yfinance` and `alphavantage` are accepted by `SUPPORTED_DATA_SOURCES`; Polygon.io is not implemented. Provider details and limitations are in [docs/09_api_research.md](./docs/09_api_research.md).
 
 ![System architecture](docs/diagrams/exports/system-architecture.png)
 
@@ -118,17 +117,24 @@ If extraction reports no new data (every symbol returns an empty frame without e
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Language | Python 3.10+ |
-| Data Processing | Pandas, NumPy |
-| Financial API | Alpha Vantage REST API + yfinance |
-| Database | PostgreSQL 15 + SQLAlchemy + psycopg2 |
-| Orchestration | Apache Airflow 2.x |
-| Visualization | Matplotlib, Plotly |
-| Testing | pytest |
-| Version Control | Git + GitHub |
-| Optional | Docker, Docker Compose, MongoDB |
+“Implemented” means the module exists in this repository and is covered by offline tests where applicable. It does not mean a live database, Airflow deployment, or provider call has been verified here. Full rationale: [docs/08_system_analysis_and_design.md §14](./docs/08_system_analysis_and_design.md#14-technology-stack-rationale).
+
+| Layer | Technology | Status in this repository |
+|-------|-----------|---------------------------|
+| Language | Python 3.10+ | Implemented; `requirements.txt` does not pin the interpreter |
+| Data Processing | Pandas | Implemented |
+| Numeric dependency | NumPy | Transitive dependency of Pandas; imported directly only by tests |
+| HTTP / config | `requests`, `python-dotenv` | Implemented |
+| Financial API | Alpha Vantage REST API (called via `requests`) | Implemented code path; requires `ALPHA_VANTAGE_API_KEY`; official API requirement |
+| Financial API | yfinance | Implemented code path; runtime default; third-party and unofficial |
+| Database | PostgreSQL 15 + SQLAlchemy 1.4.52 + psycopg2-binary | Implemented in code; database runtime not verified here |
+| Orchestration | Apache Airflow 2.8.1 | Implemented in code (DAG); not verified running here |
+| Visualization | Matplotlib, Plotly, Jupyter | Listed/planned; `notebooks/` is currently empty |
+| Testing | pytest | Implemented (offline unit tests) |
+| Version Control | Git + GitHub | Implemented |
+| Optional | Docker, Docker Compose, MongoDB | **Not implemented**: no Docker files; MongoDB only commented in `requirements.txt` |
+
+**Why this stack:** Python + Pandas is sufficient for a small daily batch of eight symbols, so no distributed engine is used. PostgreSQL provides constraints, idempotent upserts, and SQL window-function analytics; SQLAlchemy + psycopg2 provide a parameterised database layer. Airflow is the scheduling/retry/visibility layer, while `pipeline.py` remains the manual CLI path. yfinance is convenient for development; Alpha Vantage is the documented REST path for the DEPI requirement. Neither source is treated as unlimited or SLA-backed. Docker and MongoDB are optional extensions, not current capabilities. The `alpha-vantage` Python package is listed in `requirements.txt` but is not imported; the code calls the REST endpoint directly.
 
 ---
 
@@ -295,13 +301,14 @@ pytest tests/ -v
 
 ## 📁 Data Sources
 
-| Source | Cost | API Key | Best For |
-|--------|------|---------|---------|
-| **yfinance** | Free, unlimited | ❌ Not needed | Development & testing |
-| **Alpha Vantage** | Free (25 req/day) | ✅ Required | Official API requirement |
-| **Polygon.io** | Free (5 req/min) | ✅ Required | Alternative to Alpha Vantage |
+| Source | Role in this project | API key / quota | Important limitation |
+|--------|----------------------|-----------------|----------------------|
+| **yfinance** | Runtime default (`DATA_SOURCE=yfinance`) for development, tests, and convenience backfills | No key in this project. No published quota or SLA in the sources reviewed. | Third-party library, **not** affiliated/endorsed by Yahoo and **not unlimited**. Yahoo’s terms apply; intended for research/educational and personal use. |
+| **Alpha Vantage** | Official REST API path (`DATA_SOURCE=alphavantage`) for the DEPI “consume an API” requirement and demos | Key required. Provider support page states 25 requests/day on the free tier; premium plans and an open-source/educational exception (subject to provider verification) are available. | Project defaults to `TIME_SERIES_DAILY` with `outputsize=compact` (latest ~100 sessions). `full` history requires a premium key per current provider docs. |
 
-Get your free Alpha Vantage key at: https://www.alphavantage.co/support/#api-key
+Get a free Alpha Vantage key at <https://www.alphavantage.co/support/#api-key>. Provider facts above were checked on **5 November 2026**; quotas and terms can change. See [docs/09_api_research.md](./docs/09_api_research.md) for source URLs, response structures, error handling, and licensing notes.
+
+Only these two providers are supported by `SUPPORTED_DATA_SOURCES`. **Polygon.io is not implemented** and is not a drop-in alternative in the current code.
 
 ---
 

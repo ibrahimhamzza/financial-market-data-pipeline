@@ -51,10 +51,11 @@ Without an automated pipeline, the work is manual (download, clean, recalculate 
 
 | Stage | What we do |
 |-------|------------|
-| **Extract** | Call Alpha Vantage (`TIME_SERIES_DAILY`) as the official API requirement; use **yfinance** during development (no daily quota). |
-| **Validate** | Check HTTP status, non-empty body, and required JSON fields before parsing. |
-| **Transform** | Pandas: forward-fill prices, drop duplicate `(symbol, date)`, cast types, compute metrics. |
-| **Load** | Write raw JSON under `raw_data/`; insert structured rows via SQLAlchemy. Skip rows already stored. |
+| **Extract** | Call Alpha Vantage (`TIME_SERIES_DAILY`) as the official API requirement; use **yfinance** during development (no daily quota). Validate the HTTP response and payload, save the vendor JSON under `raw_data/`, and write `_staging.csv`. |
+| **Validate** | Validate the staging CSV structure and required fields (`symbol`, `trade_date`, OHLCV). This is separate from the API response validation performed during extraction. |
+| **Transform** | Pandas: forward-fill prices, drop duplicate `(symbol, date)`, cast types, compute metrics for the staging keys, and write `_metrics.csv`. |
+| **Load** | Insert raw rows into PostgreSQL (skip existing keys) and upsert transformed metric rows via SQLAlchemy. |
+| **Quality Check** | Query the database for row counts, duplicate raw keys, null closes, and orphan transformed rows; duplicates or orphans fail the run. |
 | **Analyze** | SQL window functions (`LAG`, `RANK`, `AVG() OVER`) and CTEs; SQL views for common queries. |
 | **Orchestrate** | Airflow DAG: extract → validate → transform → load → quality_check. |
 | **Visualize** | Matplotlib / Plotly in Jupyter: price + MAs, volume, returns. |

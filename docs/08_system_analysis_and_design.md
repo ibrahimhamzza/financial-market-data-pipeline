@@ -13,6 +13,8 @@ See [01_project_proposal.md](./01_project_proposal.md). In one sentence: analyst
 
 **Architecture style:** batch ETL / data pipeline (not MVC, not microservices). Control plane = Apache Airflow. Data plane = Python (Pandas) + PostgreSQL.
 
+**Data-source default:** `config/settings.py` sets `DATA_SOURCE` to **yfinance** when the environment variable is absent. yfinance is therefore the runtime default for development, tests, and any scheduled run that does not override the setting. **Alpha Vantage** is the supported official REST API path used for the DEPI “consume an API” requirement and demonstrations; it is not the default. The diagrams label the external entity as “Alpha Vantage / yfinance” to show both supported paths, not to imply that Alpha Vantage is the default. Only those two values are accepted by `SUPPORTED_DATA_SOURCES`; Polygon.io is not implemented. See [09_api_research.md](./09_api_research.md) for provider evidence and limitations.
+
 ---
 
 ## 2. Software architecture
@@ -729,7 +731,7 @@ flowchart TB
     NET[Internet] --> PY
 ```
 
-Optional later: Docker Compose with `pipeline` + `postgres` services. No public web UI is required.
+Optional later: Docker Compose with `pipeline` + `postgres` services. No public web UI is required. **Status:** planned/optional only — no `Dockerfile` or `docker-compose.yml` is present in the repository at this revision, so Docker is not part of the current implementation.
 
 ---
 
@@ -745,3 +747,30 @@ Not a product UI. Operator surfaces: Airflow (localhost:8080), pgAdmin or `psql`
 - Failure-path coverage: `tests/test_extraction_pipeline_failure.py` asserts all-symbol/partial `ExtractionError`, no-new-data success, and failed-run recording.
 - Integration: create `financial_db`, apply `schema.sql` + `views.sql`, copy `.env.example` → `.env`, `python pipeline.py`.
 - Secrets stay in `.env`. GitHub URL stays fixed.
+
+---
+
+## 14. Technology stack rationale
+
+This section explains why each technology is used in this repository and separates **implemented** components from **configured/listed** or **planned** ones. “Implemented in code” means the module exists and is exercised by offline tests where noted; it does **not** mean a live database, Airflow deployment, or provider call has been verified in this repository. The current verification gap is summarised in §13 and in `DEPI_Project_Walkthrough_Report.md`.
+
+| Technology | Why it is used here | Status | Evidence |
+|------------|---------------------|--------|----------|
+| **Python 3.10+** | One language for ingestion, cleaning, metric calculation, database loading, Airflow callables, and tests | Implemented | All application modules; `README.md`; `docs/07_requirements_gathering.md` NFR6. `requirements.txt` does not pin the interpreter. |
+| **Pandas** | In-memory batch frames for parsing vendor payloads, standardising columns, cleaning, and rolling-window metrics | Implemented | `ingestion/api_client.py`, `ingestion/extractor.py`, `transform/*.py`, `database/loader.py`, `pipeline.py` |
+| **NumPy** | Numerical dependency of Pandas; direct imports are limited to tests | Configured / transitive; not directly imported by application modules | `requirements.txt`; `tests/test_calculator.py`, `tests/test_staged_metrics.py` |
+| **requests** | Direct HTTP `GET` for Alpha Vantage with explicit timeout and query parameters; avoids hiding the request/response contract behind another wrapper | Implemented | `ingestion/api_client.py` (`ALPHA_VANTAGE_URL`, `requests.get`, `validate_http_response`) |
+| **python-dotenv** | Load `.env` without hard-coding secrets; supports local development and Airflow environment injection | Implemented | `config/settings.py` |
+| **yfinance** | Runtime-default development source: no API key, pandas-native output, convenient backfills | Implemented | `ingestion/api_client.py` `fetch_yfinance()`; see [09_api_research.md](./09_api_research.md) §3 |
+| **Alpha Vantage REST API** | Official API path for the DEPI requirement; documented daily OHLCV endpoint with a documented key/quota model | Implemented via `requests` | `ingestion/api_client.py` `fetch_alpha_vantage()`; `config/settings.py` `require_alpha_vantage_key()`; see [09_api_research.md](./09_api_research.md) §2 |
+| **`alpha-vantage` Python package** | Listed as a dependency, but the application calls the REST endpoint directly with `requests` | Not used by application code | `requirements.txt`; no import in `ingestion/` |
+| **SQLAlchemy 1.4.52** | Engine/connection management, parameterised SQL, transactions, and DataFrame reads; 1.4 is pinned because Airflow 2.8.1 requires it | Implemented | `database/db_connector.py`, `database/loader.py`, `ingestion/incremental.py`, `transform/quality.py`; `requirements.txt` comment |
+| **psycopg2-binary** | PostgreSQL DBAPI driver selected by the `postgresql+psycopg2` SQLAlchemy URL | Implemented as the driver dependency | `config/settings.py` `database_url()`; `requirements.txt` |
+| **PostgreSQL 15** | Persistent relational store: unique `(symbol, trade_date)` keys, `ON CONFLICT` inserts/upserts, audit table, and SQL window-function analytics | Implemented in code; runtime not verified here | `database/schema.sql`, `database/loader.py`, `database/analytics.sql`, `database/views.sql` |
+| **Apache Airflow 2.8.1** | Control plane: weekday schedule, task dependencies, retries, and run visibility; the CLI path remains available for manual runs | Implemented in code; not verified running here | `dags/financial_pipeline_dag.py`, `pipeline.py`, `requirements.txt` |
+| **pytest** | Offline unit tests for parsing, cleaning, metrics, configuration, and failure policy | Implemented | `tests/` |
+| **Matplotlib / Plotly / Jupyter** | Planned visualization and reporting layer | Listed/planned; the `notebooks/` directory is currently empty | `requirements.txt`, `README.md` |
+| **Docker / Docker Compose** | Optional packaging for a one-command local demo | Not implemented; no `Dockerfile` or `docker-compose.yml` in the repository | Repository tree; `README.md`; §11 |
+| **MongoDB** | Optional alternative raw-JSON store | Not implemented; only a commented requirement | `requirements.txt` |
+
+**Design rationale in one paragraph.** The workload is a small daily batch (eight default symbols), so Python + Pandas is sufficient; Spark or a distributed engine would add operational cost without a demonstrated need. PostgreSQL is chosen for transactional constraints, idempotent upserts, and SQL analytics rather than storing only flat files. SQLAlchemy + psycopg2 provide a parameterised database layer while keeping the schema explicit in `schema.sql`. Airflow supplies scheduling, retries, and task visibility; `pipeline.py` also supports a direct CLI run. yfinance is the convenience default for development, while Alpha Vantage is the official REST path that satisfies the DEPI API requirement. Neither provider is treated as unlimited or SLA-backed. Docker and MongoDB remain optional extensions and are not part of the current implementation.
