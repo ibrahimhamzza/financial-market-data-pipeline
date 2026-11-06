@@ -51,7 +51,7 @@ Without an automated pipeline, the work is manual (download, clean, recalculate 
 
 | Stage | What we do |
 |-------|------------|
-| **Extract** | Call Alpha Vantage (`TIME_SERIES_DAILY`) as the official API requirement; use **yfinance** during development (no daily quota). Validate the HTTP response and payload, save the vendor JSON under `raw_data/`, and write `_staging.csv`. |
+| **Extract** | Call Alpha Vantage (`TIME_SERIES_DAILY`) as the official API requirement; use **yfinance** during development (the runtime default; it consumes no Alpha Vantage quota). Validate the HTTP response and payload, save the vendor JSON under `raw_data/`, and write `_staging.csv`. |
 | **Validate** | Validate the staging CSV structure and required fields (`symbol`, `trade_date`, OHLCV). This is separate from the API response validation performed during extraction. |
 | **Transform** | Pandas: forward-fill prices, drop duplicate `(symbol, date)`, cast types, compute metrics for the staging keys, and write `_metrics.csv`. |
 | **Load** | Insert raw rows into PostgreSQL (skip existing keys) and upsert transformed metric rows via SQLAlchemy. |
