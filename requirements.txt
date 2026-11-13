@@ -8,6 +8,12 @@ python-dotenv==1.0.0
 yfinance==1.7.0
 alpha-vantage==2.3.1
 
+# Trading calendar (XNYS) for expected-session gating (M2.1).
+# exchange_calendars 4.11+ requires numpy>=1.26.4, which conflicts with the
+# project's pinned numpy==1.26.2 / pandas==2.1.4. 4.10.1 is the latest
+# compatible version (Requires-Python ~=3.10, unpinned numpy/pandas).
+exchange_calendars==4.10.1
+
 # Database
 # Airflow 2.8.1 requires SQLAlchemy 1.4 (not 2.x). Code uses future=True, which 1.4 supports.
 sqlalchemy==1.4.52

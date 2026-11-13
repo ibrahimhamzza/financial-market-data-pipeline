@@ -35,7 +35,7 @@ Targets below are **project success bars** for the 4 December submission. Baseli
 |-----|------------|--------|----------------|
 | SQL depth | Analytical queries using window functions and CTEs | ≥ 5 queries | `database/analytics.sql` |
 | Test pass rate | pytest on ingestion/clean/calculate | 100% of written tests green | `pytest tests/ -v` |
-| Reproducibility | New clone + `env.example` + README can reach a local run | Mentor or teammate follows README without extra tribal knowledge | Setup dry-run |
+| Reproducibility | New clone + `.env.example` + README can reach a local run | Mentor or teammate follows README without extra tribal knowledge | Setup dry-run |
 | Defense coverage | Each member can explain their module in ≤ 3 minutes | 4 / 4 members in rehearsal | Timed rehearsal notes |
 
 ---

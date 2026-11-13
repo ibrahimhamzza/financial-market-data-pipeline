@@ -1,0 +1,111 @@
+flowchart LR
+    API["Financial Data API<br/>Alpha Vantage / yfinance"]
+    AF["Airflow DAG<br/>financial_pipeline_dag<br/>0 22 * * 1-5"]
+    CLI["Operator / CLI<br/>python pipeline.py"]
+    AN["Analyst<br/>SQL · notebooks"]
+
+    subgraph ORCH["Orchestration — pipeline.py"]
+        RP["run_pipeline()<br/>CLI path with run audit"]
+        ET["extract_task()"]
+        VT["validate_task()"]
+        TT["transform_task()"]
+        LT["load_task()"]
+        QT["quality_check_task()"]
+    end
+
+    subgraph ING["Ingestion — ingestion/"]
+        EX["extractor.run_extraction()"]
+        AC["api_client.fetch_daily()<br/>validate_http_response()<br/>save_raw_json()"]
+        IN["incremental.next_start_date()"]
+    end
+
+    subgraph TRF["Transform — transform/"]
+        SM["staged_metrics.compute_metrics_for_staging()"]
+        CL["cleaner.clean_data()"]
+        CA["calculator.calculate_metrics()"]
+        QC["quality.run_quality_checks()"]
+    end
+
+    subgraph DBL["Database — database/"]
+        DBC["db_connector.get_engine()"]
+        LD["Loader — loader.load_raw()<br/>loader.load_transformed()<br/>loader.fetch_raw_for_symbols()<br/>only writer of raw/transformed tables"]
+        AUD["loader.start_pipeline_run()<br/>loader.finish_pipeline_run()"]
+    end
+
+    subgraph FILES["raw_data/ — intermediate files"]
+        JSON["SYMBOL_TIMESTAMP.json<br/>vendor payloads"]
+        STG["_staging.csv<br/>extract batch"]
+        MET["_metrics.csv<br/>metric batch"]
+    end
+
+    subgraph PG["PostgreSQL — persistent tables"]
+        RAW[("raw_market_data")]
+        TRANS[("transformed_market_data")]
+        RUNS[("pipeline_runs")]
+    end
+
+    ANALYTICS["analytics.sql · views.sql<br/>notebooks"]
+
+    AF --> ET
+    AF --> VT
+    AF --> TT
+    AF --> LT
+    AF --> QT
+    CLI --> RP
+    RP --> ET
+    RP --> VT
+    RP --> TT
+    RP --> LT
+    RP --> QT
+    RP --> AUD
+    AUD --> DBC
+    AUD --> RUNS
+
+    ET --> EX
+    EX --> IN
+    IN --> DBC
+    EX --> AC
+    AC --> API
+    AC --> JSON
+    ET --> STG
+
+    STG --> VT
+    STG --> TT
+    STG -->|"raw rows"| LT
+    TT --> SM
+    SM --> CL
+    SM --> CA
+    TT -->|"writes metric rows"| MET
+    MET -->|"metric rows"| LT
+
+    RAW -.->|"stored OHLCV history<br/>read-only input to Transform"| TT
+    TT -->|"history request<br/>fetch_raw_for_symbols()"| LD
+
+    LT -->|"load_raw() / load_transformed()"| LD
+    LD -->|"INSERT · ON CONFLICT DO NOTHING<br/>load_raw() only"| RAW
+    LD -->|"UPSERT · ON CONFLICT DO UPDATE<br/>load_transformed() only"| TRANS
+
+    QT --> QC
+    QC --> DBC
+    QC -->|"read-only checks"| RAW
+    QC -->|"read-only checks"| TRANS
+
+    AN --> ANALYTICS
+    ANALYTICS -->|"reads"| RAW
+    ANALYTICS -->|"reads"| TRANS
+    ANALYTICS -->|"reads"| RUNS
+
+    NOTE["Airflow invokes the five task callables directly.<br/>run_pipeline() is the CLI path that also records pipeline_runs.<br/>Transform writes only _metrics.csv; load_task() is the only writer of raw_market_data and transformed_market_data."]
+    AF -.- NOTE
+
+    classDef external fill:#f5f5f5,stroke:#666,stroke-width:1px
+    classDef process fill:#e8f0fe,stroke:#3b6fb6,stroke-width:1px
+    classDef file fill:#fff4d6,stroke:#c99a00,stroke-width:1px
+    classDef table fill:#e6f4ea,stroke:#2e7d32,stroke-width:1px
+    classDef note fill:#fffbe6,stroke:#999,stroke-dasharray:3 3
+
+    class API,AF,CLI,AN,ANALYTICS external
+    class RP,ET,VT,TT,LT,QT,EX,AC,IN,SM,CL,CA,QC,DBC,LD,AUD process
+    class JSON,STG,MET file
+    class RAW,TRANS,RUNS table
+    class NOTE note

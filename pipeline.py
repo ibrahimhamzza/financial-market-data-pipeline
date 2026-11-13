@@ -15,7 +15,7 @@ from database.loader import (
     load_transformed,
     start_pipeline_run,
 )
-from ingestion.extractor import run_extraction
+from ingestion.extractor import ExtractionError, run_extraction
 from transform.quality import run_quality_checks
 from transform.staged_metrics import compute_metrics_for_staging
 from utils.logger import get_logger
@@ -28,7 +28,24 @@ METRICS_PATH = RAW_DATA_DIR / "_metrics.csv"
 
 def extract_task(**_context) -> str:
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    raw = run_extraction(incremental=True)
+    try:
+        raw = run_extraction(incremental=True)
+    except ExtractionError:
+        raise
+    if getattr(raw, "attrs", {}).get("no_new_data"):
+        # Remove any stale staging/metrics to avoid loading old data
+        try:
+            if STAGING_PATH.exists():
+                STAGING_PATH.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if METRICS_PATH.exists():
+                METRICS_PATH.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("extract_task: no new data available (incremental up to date)")
+        return "NO_NEW_DATA"
     raw.to_csv(STAGING_PATH, index=False)
     logger.info("extract_task wrote %s rows to %s", len(raw), STAGING_PATH.name)
     return str(STAGING_PATH)
@@ -36,7 +53,9 @@ def extract_task(**_context) -> str:
 
 def validate_task(**_context) -> str:
     if not STAGING_PATH.exists():
-        raise FileNotFoundError("Staging CSV missing; extract_task must run first")
+        # No staging file likely means no-new-data from extraction
+        logger.info("validate_task: no staging file (likely no new data)")
+        return "SKIP_NO_NEW_DATA"
     raw = pd.read_csv(STAGING_PATH)
     required = {
         "symbol",
@@ -48,8 +67,7 @@ def validate_task(**_context) -> str:
         "volume",
     }
     if raw.empty:
-        logger.warning("validate_task: no new rows (incremental may already be up to date)")
-        return str(STAGING_PATH)
+        raise ValueError("validate_task: no usable rows to validate after extraction")
     missing = required - set(raw.columns)
     if missing:
         raise ValueError(f"Staging file missing columns: {missing}")
@@ -60,7 +78,10 @@ def validate_task(**_context) -> str:
 
 
 def transform_task(**_context) -> str:
-    staging = pd.read_csv(STAGING_PATH) if STAGING_PATH.exists() else pd.DataFrame()
+    if not STAGING_PATH.exists():
+        logger.info("transform_task: skipping (no new data)")
+        return "SKIP_NO_NEW_DATA"
+    staging = pd.read_csv(STAGING_PATH)
     history = pd.DataFrame()
     if not staging.empty and "symbol" in staging.columns:
         history = fetch_raw_for_symbols(staging["symbol"].dropna().unique().tolist())
@@ -71,7 +92,10 @@ def transform_task(**_context) -> str:
 
 
 def load_task(**_context) -> int:
-    raw = pd.read_csv(STAGING_PATH) if STAGING_PATH.exists() else pd.DataFrame()
+    if not STAGING_PATH.exists():
+        logger.info("load_task: skipping (no new data)")
+        return 0
+    raw = pd.read_csv(STAGING_PATH)
     metrics = pd.read_csv(METRICS_PATH) if METRICS_PATH.exists() else pd.DataFrame()
     inserted_raw = load_raw(raw)
     load_transformed(metrics)
@@ -80,6 +104,9 @@ def load_task(**_context) -> int:
 
 
 def quality_check_task(**_context) -> dict:
+    if not STAGING_PATH.exists():
+        logger.info("quality_check_task: skipping (no new data)")
+        return {"status": "skipped_no_new_data"}
     return run_quality_checks()
 
 
@@ -94,7 +121,22 @@ def run_pipeline(record_run: bool = True) -> dict:
             logger.warning("Could not write pipeline_runs start: %s", exc)
 
     try:
-        extract_task()
+        extract_result = extract_task()
+        if extract_result == "NO_NEW_DATA":
+            duration = time.perf_counter() - started
+            if run_id is not None:
+                try:
+                    finish_pipeline_run(
+                        run_id,
+                        status="success",
+                        symbols_processed=0,
+                        rows_inserted=0,
+                        duration_seconds=duration,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("Could not write pipeline_runs finish state")
+            logger.info("Pipeline complete with no new data in %.2fs", duration)
+            return {"status": "success", "no_new_data": True, "duration_seconds": duration}
         validate_task()
         transform_task()
         inserted = load_task()
@@ -113,14 +155,17 @@ def run_pipeline(record_run: bool = True) -> dict:
     except Exception as exc:
         duration = time.perf_counter() - started
         if run_id is not None:
-            finish_pipeline_run(
-                run_id,
-                status="failed",
-                symbols_processed=0,
-                rows_inserted=0,
-                duration_seconds=duration,
-                error_message=str(exc),
-            )
+            try:
+                finish_pipeline_run(
+                    run_id,
+                    status="failed",
+                    symbols_processed=0,
+                    rows_inserted=0,
+                    duration_seconds=duration,
+                    error_message=str(exc),
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("Could not write pipeline_runs finish state")
         logger.exception("Pipeline failed")
         raise
 

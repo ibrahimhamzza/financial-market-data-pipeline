@@ -37,6 +37,7 @@ airflow-webserver.pid
 .vscode/
 .idea/
 *.swp
+opencode.json
 
 # OS
 .DS_Store

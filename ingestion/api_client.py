@@ -19,6 +19,7 @@ from config.settings import (
     RAW_DATA_DIR,
     RETRY_BASE_DELAY_SECONDS,
     require_alpha_vantage_key,
+    validate_data_source,
 )
 from utils.logger import get_logger
 
@@ -221,7 +222,10 @@ def fetch_daily(
     source: Optional[str] = None,
 ) -> pd.DataFrame:
     """Return a standardized OHLCV DataFrame for one symbol."""
-    provider = (source or DATA_SOURCE).lower()
+    try:
+        provider = validate_data_source(source or DATA_SOURCE)
+    except ValueError as exc:
+        raise APIClientError(str(exc)) from exc
     logger.info("Fetching %s from %s (start=%s end=%s)", symbol, provider, start, end)
     if provider == "alphavantage":
         frame = fetch_alpha_vantage(symbol)
@@ -230,9 +234,7 @@ def fetch_daily(
         if end:
             frame = frame[frame["trade_date"] <= pd.Timestamp(end)]
         return frame.reset_index(drop=True)
-    if provider == "yfinance":
-        return fetch_yfinance(symbol, start=start, end=end)
-    raise APIClientError(f"Unknown DATA_SOURCE={provider}")
+    return fetch_yfinance(symbol, start=start, end=end)
 
 
 def iso_utc(value: datetime | date | pd.Timestamp) -> str:

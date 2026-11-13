@@ -21,7 +21,7 @@ Required by DEPI Playbook: each member’s name, role, student ID, and email.
 |-------|--------|
 | Now | Repo collaborators, branch rules, first push of structure + `docs/` |
 | Design | End-to-end architecture diagram; `config/settings.py`; `utils/logger.py` |
-| Build | Airflow install, `dags/financial_pipeline_dag.py`, schedule `0 18 * * 1-5`, retries, UI screenshots |
+| Build | Airflow install, `dags/financial_pipeline_dag.py`, schedule `0 22 * * 1-5`, retries, UI screenshots |
 | Close | Optional `Dockerfile` / `docker-compose.yml`; help D with README architecture section |
 
 **Tools:** Git, Airflow, draw.io / Mermaid, python-dotenv, logging, Docker (optional).

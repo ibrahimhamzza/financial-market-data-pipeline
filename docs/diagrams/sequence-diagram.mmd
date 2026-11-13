@@ -1,0 +1,88 @@
+sequenceDiagram
+    autonumber
+    participant S as Scheduler / run_pipeline
+    participant PX as pipeline.extract_task
+    participant EX as extractor.run_extraction
+    participant IN as incremental.next_start_date
+    participant A as api_client
+    participant FS as raw_data/
+    participant V as pipeline.validate_task
+    participant T as pipeline.transform_task
+    participant L as pipeline.load_task
+    participant Q as pipeline.quality_check_task
+    participant DB as PostgreSQL
+
+    opt run_pipeline() CLI path (not Airflow)
+        S->>DB: start_pipeline_run() INSERT pipeline_runs status='running'
+    end
+
+    S->>PX: extract_task()
+    PX->>EX: run_extraction(incremental=True)
+
+    loop each configured symbol
+        EX->>IN: next_start_date(symbol)
+        IN->>DB: SELECT MAX(trade_date) FROM raw_market_data
+        DB-->>IN: last loaded date or NULL
+        IN-->>EX: watermark + 1 day or None
+        EX->>A: fetch_daily(symbol, start=watermark)
+        A->>FS: save vendor JSON
+        A-->>EX: standardized OHLCV DataFrame
+        alt rows returned and no API/payload error
+            EX->>EX: append frame
+        else empty frame without error
+            EX->>EX: log "No new rows" for symbol
+        else API/payload error after retries
+            EX->>EX: record symbol error and continue loop
+        end
+    end
+
+    alt no symbol errors and at least one frame
+        EX-->>PX: combined OHLCV DataFrame
+        Note over PX: extract_task owns staging creation.
+        PX->>FS: write _staging.csv
+        PX-->>S: staging path
+
+        S->>V: validate_task()
+        V->>FS: read _staging.csv
+
+        alt staging non-empty, required columns present, no null keys
+            V-->>S: validated staging path
+            S->>T: transform_task()
+            T->>FS: read _staging.csv
+            T->>DB: fetch_raw_for_symbols() read-only history
+            DB-->>T: stored OHLCV rows
+            Note over T: may raise on missing columns<br/>or history-read failure
+            T->>FS: write _metrics.csv
+            T-->>S: metrics path
+
+            S->>L: load_task()
+            L->>FS: read _staging.csv + _metrics.csv
+            L->>DB: INSERT raw_market_data ON CONFLICT DO NOTHING
+            L->>DB: UPSERT transformed_market_data ON CONFLICT DO UPDATE
+            L-->>S: inserted raw row count
+
+            S->>Q: quality_check_task()
+            Q->>DB: counts · duplicates · null closes · orphans
+            DB-->>Q: check results
+            alt duplicates = 0 and orphans = 0
+                Q-->>S: quality check counts
+                Note over S: finish_pipeline_run(status='success', ...)
+            else duplicates > 0 or orphans > 0
+                Q-->>S: raise ValueError
+            end
+        else validation fails
+            V-->>S: raise ValueError
+        end
+
+    else every symbol checked, none returned rows, no errors
+        EX-->>PX: empty DataFrame with attrs["no_new_data"] = True
+        Note over PX: extract_task owns NO_NEW_DATA handling.
+        PX->>FS: remove stale _staging.csv and _metrics.csv
+        PX-->>S: "NO_NEW_DATA"
+        Note over S: run_pipeline (CLI) records success with 0 rows<br/>and skips validate → quality_check. Airflow tasks self-skip
+
+    else any symbol fails (partial or all)
+        EX-->>PX: raise ExtractionError
+        PX-->>S: re-raise ExtractionError
+        Note over S: run_pipeline records failed run<br/>and no staging file is written
+    end
