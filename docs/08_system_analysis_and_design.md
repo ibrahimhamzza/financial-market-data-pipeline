@@ -22,7 +22,7 @@ See [01_project_proposal.md](./01_project_proposal.md). In one sentence: analyst
 ```mermaid
 flowchart LR
     API["Financial Data API<br/>Alpha Vantage / yfinance"]
-    AF["Airflow DAG<br/>financial_pipeline_dag<br/>0 18 * * 1-5"]
+    AF["Airflow DAG<br/>financial_pipeline_dag<br/>0 22 * * 1-5"]
     CLI["Operator / CLI<br/>python pipeline.py"]
     AN["Analyst<br/>SQL · notebooks"]
 
@@ -50,7 +50,7 @@ flowchart LR
 
     subgraph DBL["Database — database/"]
         DBC["db_connector.get_engine()"]
-        LD["loader.load_raw()<br/>loader.load_transformed()<br/>loader.fetch_raw_for_symbols()"]
+        LD["Loader — loader.load_raw()<br/>loader.load_transformed()<br/>loader.fetch_raw_for_symbols()<br/>only writer of raw/transformed tables"]
         AUD["loader.start_pipeline_run()<br/>loader.finish_pipeline_run()"]
     end
 
@@ -93,30 +93,31 @@ flowchart LR
 
     STG --> VT
     STG --> TT
-    STG --> LT
+    STG -->|"raw rows"| LT
     TT --> SM
     SM --> CL
     SM --> CA
-    TT --> MET
-    MET --> LT
+    TT -->|"writes metric rows"| MET
+    MET -->|"metric rows"| LT
 
-    TT --> LD
-    LD --> RAW
-    LT --> LD
-    LD --> RAW
-    LD --> TRANS
+    RAW -.->|"stored OHLCV history<br/>read-only input to Transform"| TT
+    TT -->|"history request<br/>fetch_raw_for_symbols()"| LD
+
+    LT -->|"load_raw() / load_transformed()"| LD
+    LD -->|"INSERT · ON CONFLICT DO NOTHING<br/>load_raw() only"| RAW
+    LD -->|"UPSERT · ON CONFLICT DO UPDATE<br/>load_transformed() only"| TRANS
 
     QT --> QC
     QC --> DBC
-    QC --> RAW
-    QC --> TRANS
+    QC -->|"read-only checks"| RAW
+    QC -->|"read-only checks"| TRANS
 
     AN --> ANALYTICS
-    ANALYTICS --> RAW
-    ANALYTICS --> TRANS
-    ANALYTICS --> RUNS
+    ANALYTICS -->|"reads"| RAW
+    ANALYTICS -->|"reads"| TRANS
+    ANALYTICS -->|"reads"| RUNS
 
-    NOTE["Airflow invokes the five task callables directly.<br/>run_pipeline() is the CLI path that also records pipeline_runs."]
+    NOTE["Airflow invokes the five task callables directly.<br/>run_pipeline() is the CLI path that also records pipeline_runs.<br/>Transform writes only _metrics.csv; load_task() is the only writer of raw_market_data and transformed_market_data."]
     AF -.- NOTE
 
     classDef external fill:#f5f5f5,stroke:#666,stroke-width:1px
@@ -528,6 +529,7 @@ The extractor treats any symbol failure as a run failure; it does not report par
 | Quality-check failure | `run_quality_checks()` raises `ValueError` when `raw_duplicates > 0` or `orphan_transformed > 0`; null close counts are returned and logged but do not fail the run. `quality_check_task()` propagates the error, and `run_pipeline()` records the failed run and re-raises. Quality check runs after load, so rows written by that run remain committed even though the run is marked failed. |
 | Pipeline-run audit write failure | A failure to insert the initial `pipeline_runs` row is logged as a warning and the pipeline continues without a run record. Failures to update the no-new-data and failure-state finish records are also best-effort warnings. A failure to update the normal success finish record is not wrapped locally, so it enters the outer exception handler, marks the run failed, and re-raises. |
 | Incremental watermark lookup failure | Logged as a warning; extraction falls back to a full-history request for that symbol (`next_start_date()` returns `None`). |
+| XNYS calendar gate (no expected session) | Before calling the provider, `run_extraction()` checks whether the requested window contains an expected completed XNYS session (weekend, scheduled holiday, same-day rerun, or a session not yet complete after the availability buffer). If no expected session exists, the symbol is skipped without a provider call and is **not** recorded as a provider error. A `None` start (full history) is not gated. If the calendar check itself raises, a warning is logged and extraction proceeds to the provider call. |
 | Rollback and pipeline-level retries (not implemented) | `run_pipeline()` has no automatic rollback or compensation after a quality-check failure, and no retry logic of its own; this is unspecified by the current code. Retries are owned by Airflow (`default_args`: `retries=3`, 5-minute delay) or by the caller. |
 
 > `run_extraction()` retries individual API calls inside `api_client._retry_call()` (connection, timeout, and `APIClientError`), but after those retries are exhausted the symbol is recorded as failed and the extraction policy above applies.

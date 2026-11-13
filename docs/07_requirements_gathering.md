@@ -27,7 +27,7 @@ This document covers DEPI section 3: stakeholders, user stories / use cases, fun
 | **Operator** | Starts/monitors the DAG (team member on demo day). |
 | **Analyst** | Reads PostgreSQL / notebooks; does not call the API by hand. |
 | **Developer** | Changes Python/SQL; runs pytest. |
-| **Scheduler** | Airflow scheduler (system actor) at 18:00 weekdays. |
+| **Scheduler** | Airflow scheduler (system actor) at 22:00 UTC weekdays. |
 | **Market Data API** | External system (Alpha Vantage or yfinance). |
 | **PostgreSQL** | System of record. |
 
@@ -94,7 +94,7 @@ Developer opens the data-quality notebook against PostgreSQL and exports figures
 | FR10 | Incremental extract using last loaded date per symbol | Must |
 | FR11 | Idempotent load (no duplicate business keys) | Must |
 | FR12 | Log each run in `pipeline_runs` | Must |
-| FR13 | Airflow DAG with five tasks and weekday 18:00 schedule | Must |
+| FR13 | Airflow DAG with five tasks and weekday 22:00 UTC schedule | Must |
 | FR14 | ≥ 5 analytical SQL queries (windows + CTEs) and reusable views | Must |
 | FR15 | Unit tests for client, cleaner, calculator | Must |
 | FR16 | Data quality report + time-series charts | Must |
@@ -191,9 +191,9 @@ Metrics are calculated per symbol in ascending `trade_date` order.
 - **FR12-AC3:** A `NO_NEW_DATA` run is recorded as `success` with `symbols_processed=0` and `rows_inserted=0`. A failed run stores `status='failed'` and a non-empty `error_message` containing the exception text. If the initial audit insert fails, the pipeline logs a warning and continues without a run row.
 - **FR12-AC4 — Needs stakeholder decision:** The current Airflow DAG invokes the five task callables directly and does **not** write `pipeline_runs`; Airflow task state is separate. Decide whether “each run” in FR12 must include Airflow-triggered runs. If yes, the DAG must create and finish run-audit rows in addition to the CLI path; if no, FR12 is satisfied for CLI runs only and this limitation must be stated in the evaluation materials.
 
-#### FR13 — Airflow DAG with five tasks and weekday 18:00 schedule
+#### FR13 — Airflow DAG with five tasks and weekday 22:00 UTC schedule
 
-- **FR13-AC1:** `dags/financial_pipeline_dag.py` defines a DAG with `dag_id="financial_pipeline_dag"`, `schedule="0 18 * * 1-5"`, `start_date=datetime(2026, 10, 26)`, `catchup=False`, and `max_active_runs=1`.
+- **FR13-AC1:** `dags/financial_pipeline_dag.py` defines a DAG with `dag_id="financial_pipeline_dag"`, `schedule="0 22 * * 1-5"`, `start_date=datetime(2026, 10, 26)`, `catchup=False`, and `max_active_runs=1`.
 - **FR13-AC2:** The DAG contains exactly five `PythonOperator` tasks with IDs `extract`, `validate`, `transform`, `load`, and `quality_check`, wired as `extract >> validate >> transform >> load >> quality_check`.
 - **FR13-AC3:** When Airflow is installed, the DAG imports without error and appears in the Airflow UI with the five tasks and the weekday schedule. Airflow owns task state; it does not update `pipeline_runs` (see FR12-AC4).
 
@@ -324,7 +324,7 @@ Metrics are calculated per symbol in ascending `trade_date` order.
 - **NFR10-AC1:** The repository has one fixed GitHub remote (`git remote -v` shows the project origin) and the documentation instructs the team not to recreate or rename the repository.
 - **NFR10-AC2:** The team table in `README.md` and [03_task_assignment_and_roles.md](./03_task_assignment_and_roles.md) lists all four members, their student IDs, and their roles; the RACI table shows accountability by work item.
 - **NFR10-AC3:** The final presentation and rehearsal materials show each member presenting their own module, consistent with the KPI of ≤ 3 minutes per member. These materials are not yet in the repository.
-- **NFR10-AC4:** The README clone command still contains the placeholder `YOUR_USERNAME`; the official repository URL must replace it before final submission.
+- **NFR10-AC4:** The README clone command uses the actual repository URL; no placeholder remains.
 
 ---
 
@@ -377,7 +377,7 @@ Status definitions:
 | FR10 | Incremental extract using last loaded date per symbol | §5.1 FR10-AC1–FR10-AC4 | SQL query (`MAX(trade_date)`) + inspection (`ingestion/incremental.py`) + manual log check | Implemented |
 | FR11 | Idempotent load (no duplicate business keys) | §5.1 FR11-AC1–FR11-AC3 | SQL duplicate-key query + inspection (`database/schema.sql`, `database/loader.py`) | Implemented |
 | FR12 | Log each run in `pipeline_runs` | §5.1 FR12-AC1–FR12-AC4 | Test (`tests/test_extraction_pipeline_failure.py`) + SQL query on `pipeline_runs` + inspection (`pipeline.py`) | Partially Implemented |
-| FR13 | Airflow DAG with five tasks and weekday 18:00 schedule | §5.1 FR13-AC1–FR13-AC3 | Inspection (`dags/financial_pipeline_dag.py`) + manual Airflow UI check | Implemented |
+| FR13 | Airflow DAG with five tasks and weekday 22:00 UTC schedule | §5.1 FR13-AC1–FR13-AC3 | Inspection (`dags/financial_pipeline_dag.py`) + manual Airflow UI check | Implemented |
 | FR14 | ≥ 5 analytical SQL queries (windows + CTEs) and reusable views | §5.1 FR14-AC1–FR14-AC3 | Inspection (`database/analytics.sql`, `database/views.sql`) + SQL query execution | Implemented |
 | FR15 | Unit tests for client, cleaner, calculator | §5.1 FR15-AC1–FR15-AC3 | Test (`pytest tests/ -v`; 42 passed) | Implemented |
 | FR16 | Data quality report + time-series charts | §5.1 FR16-AC1–FR16-AC4 | Inspection (`notebooks/` is empty) + manual check after implementation | Not Implemented |
@@ -414,17 +414,17 @@ Each requirement appears in exactly one category below; the counts sum to 30.
 |-------------|----------------|
 | FR12, NFR1 | Airflow invokes task callables directly and does not write `pipeline_runs`; the audit table is written only by the CLI `run_pipeline()` path. A stakeholder decision is needed on whether Airflow runs must also be audited there. |
 | FR16 | `notebooks/` is empty; no data-quality notebook, time-series notebook, or exported chart exists. |
-| FR17 | The working tree contains `.env.example`, but it is untracked; the tracked path is still the legacy `env.example`, which is deleted in the working tree. Committing or staging the rename is outside this documentation-only task. |
+| FR17 | `.env.example` is tracked and contains placeholders only; `.env` is gitignored and not committed. No real credentials are stored in the repository. |
 | FR19 | No `docker-compose.yml`/`Dockerfile` exists; optional item, decision needed on inclusion. |
 | FR20 | No MongoDB client, collection, or dependency is implemented; optional item, decision needed on scope and schema. |
 | NFR3 | Secrets controls exist, but the README and defaults use the PostgreSQL `postgres` superuser; no least-privilege application role or grant set is defined. |
 | NFR4 | No measured < 10-minute run is recorded, no reference hardware is named, and there is no automated Alpha Vantage quota guard. |
 | NFR8 | The Jupyter part of the operator workflow cannot be exercised because the notebooks are absent. |
-| NFR10 | Role split is documented, but the README clone URL still contains `YOUR_USERNAME` and the presentation/rehearsal materials do not exist yet. |
+| NFR10 | Role split is documented; the README clone command uses the actual repository URL, so no placeholder remains. Presentation/rehearsal materials do not exist yet. |
 
 ### 9.3 Evidence used for this review
 
 - Source inspection of `pipeline.py`, `ingestion/`, `transform/`, `database/`, `dags/`, `config/settings.py`, and `utils/logger.py`.
-- `pytest tests/ -v` → **42 passed** (run on 5 November 2026; no database or network required).
-- `git remote -v` → project origin exists; `git check-ignore .env` confirms `.env` is ignored; `git ls-files` shows the legacy `env.example` is tracked while `.env.example` is currently untracked in the working tree.
+- `pytest tests/ -v` → **89 passed** (run on 6 November 2026; no database or network required).
+- `git remote -v` → project origin exists; `git check-ignore .env` confirms `.env` is ignored; `git ls-files` confirms `.env.example` is tracked and contains placeholders only.
 - `README.md`, `docs/08_system_analysis_and_design.md`, `docs/09_api_research.md`, `docs/04_risk_assessment.md`, and `docs/05_kpis.md` for architecture, failure policy, API behavior, and thresholds.

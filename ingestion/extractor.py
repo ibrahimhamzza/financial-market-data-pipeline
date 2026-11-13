@@ -9,6 +9,7 @@ import pandas as pd
 from config.settings import SYMBOLS
 from ingestion.api_client import APIClientError, fetch_daily
 from ingestion.incremental import next_start_date
+from ingestion.market_calendar import has_expected_session
 from utils.logger import get_logger
 
 logger = get_logger("extractor")
@@ -58,6 +59,22 @@ def run_extraction(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Incremental lookup failed for %s: %s", symbol, exc)
                 symbol_start = None
+        # Calendar gate: skip the provider call when the requested window
+        # contains no expected XNYS session (weekend, scheduled holiday,
+        # same-day rerun, or a session not yet complete after the availability
+        # buffer). A None start means full history and is not gated.
+        if symbol_start is not None:
+            try:
+                if not has_expected_session(start=symbol_start, end=end):
+                    logger.info(
+                        "No expected XNYS session for %s from %s%s; skipping provider call",
+                        symbol,
+                        symbol_start,
+                        f" to {end}" if end else "",
+                    )
+                    continue
+            except Exception as exc:  # noqa: BLE001 — calendar misconfiguration is not a symbol failure
+                logger.warning("Calendar check failed for %s: %s; proceeding to fetch", symbol, exc)
         try:
             frame = fetch_daily(symbol, start=symbol_start, end=end, source=source)
             if frame.empty:
@@ -107,6 +124,7 @@ def run_extraction(
         combined = pd.concat(frames, ignore_index=True)
         combined.attrs["errors"] = errors
         combined.attrs["symbols_ok"] = symbols_ok
+        combined.attrs["symbols_checked"] = tickers
         raise ExtractionError(
             f"Partial extraction failure: {len(symbols_ok)} symbol(s) succeeded, {len(errors)} failed ({failed}). Errors: {errors}",
             errors=errors,
@@ -116,4 +134,5 @@ def run_extraction(
     combined = pd.concat(frames, ignore_index=True)
     combined.attrs["errors"] = errors
     combined.attrs["symbols_ok"] = symbols_ok
+    combined.attrs["symbols_checked"] = tickers
     return combined

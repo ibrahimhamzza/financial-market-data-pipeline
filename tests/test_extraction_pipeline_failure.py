@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -170,3 +171,33 @@ def test_pipeline_handles_no_new_data_without_loading_stale_staging(monkeypatch,
     assert calls["finish"].get("status") == "success"
     assert result.get("status") == "success"
     assert result.get("no_new_data") is True
+
+
+def test_calendar_gate_skips_provider_on_weekend(monkeypatch):
+    # now = Fri 2026-11-27 19:00 UTC -> last completed XNYS session = Fri 11-27.
+    # next_start_date returns Sat 11-28 -> window [11-28, 11-27] reversed -> gate out.
+    import ingestion.market_calendar as market_calendar_module
+
+    class _FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 27, 19, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(market_calendar_module, "datetime", _FixedDateTime)
+
+    calls = {"fetch_daily": 0}
+
+    def fake_fetch_daily(symbol, start=None, end=None, source=None):
+        calls["fetch_daily"] += 1
+        raise AssertionError("provider must not be called on a gated-out weekend")
+
+    monkeypatch.setattr(extractor, "fetch_daily", fake_fetch_daily)
+    monkeypatch.setattr(extractor, "next_start_date", lambda s: "2026-11-28")
+
+    result = run_extraction(symbols=["AAPL"], incremental=True)
+
+    assert calls["fetch_daily"] == 0
+    assert getattr(result, "attrs", {}).get("no_new_data") is True
+    assert result.attrs["symbols_checked"] == ["AAPL"]
+    assert result.attrs["symbols_ok"] == []
+    assert result.attrs["errors"] == {}

@@ -35,7 +35,7 @@ Without an automated pipeline, the work is manual (download, clean, recalculate 
 - Daily data for eight symbols: `AAPL`, `MSFT`, `GOOGL`, `AMZN`, `META`, `TSLA`, `NVDA`, `JPM` (configurable).
 - Extract → validate → transform → load, plus quality checks.
 - PostgreSQL tables: `raw_market_data`, `transformed_market_data`, `pipeline_runs`.
-- Airflow DAG scheduled on weekdays after US market close (`0 18 * * 1-5`).
+- Airflow DAG scheduled on weekdays after US market close (`0 22 * * 1-5`).
 - Unit tests, SQL analytics, Jupyter visualizations, project documentation.
 
 **Out of scope**
