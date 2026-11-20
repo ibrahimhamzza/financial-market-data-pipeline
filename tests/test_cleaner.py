@@ -21,7 +21,8 @@ def test_clean_removes_duplicate_symbol_dates():
     assert cleaned.iloc[0]["close_price"] == 102.0
 
 
-def test_clean_forward_fills_price_nulls():
+
+def test_clean_drops_rows_with_missing_prices():
     raw = pd.DataFrame(
         {
             "symbol": ["MSFT", "MSFT"],
@@ -33,9 +34,13 @@ def test_clean_forward_fills_price_nulls():
             "volume": [500, 600],
         }
     )
+
     cleaned = clean_data(raw)
-    assert cleaned.iloc[1]["close_price"] == 10.5
-    assert cleaned.iloc[1]["volume"] == 600
+
+    assert len(cleaned) == 1
+    assert cleaned.iloc[0]["trade_date"] == pd.Timestamp("2024-01-02")
+    assert cleaned.iloc[0]["close_price"] == 10.5
+
 
 
 def test_clean_standardizes_column_names():

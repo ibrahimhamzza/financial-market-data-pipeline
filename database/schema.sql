@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS transformed_market_data (
     avg_volume_7d      NUMERIC(20, 2),
     volume_ratio       NUMERIC(10, 4),
     cumulative_return  NUMERIC(10, 6),
+    max_drawdown       NUMERIC(10, 6),
     volatility_20d     NUMERIC(10, 6),
     loaded_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_transformed_symbol_date UNIQUE (symbol, trade_date)
@@ -56,3 +57,4 @@ CREATE INDEX IF NOT EXISTS idx_transformed_symbol_date_close
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_date
     ON pipeline_runs (run_date DESC);
+

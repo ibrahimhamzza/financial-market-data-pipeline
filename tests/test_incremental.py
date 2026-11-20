@@ -9,7 +9,7 @@ from datetime import date
 
 import ingestion.incremental as incremental
 
-
+import pytest
 class _FakeResult:
     def __init__(self, value):
         self._value = value
@@ -82,20 +82,26 @@ def test_get_last_loaded_date_symbol_uppercased_in_params(monkeypatch):
     assert captured["params"] == {"symbol": "AAPL"}
 
 
-def test_get_last_loaded_date_none_on_connection_error(monkeypatch):
-    # A failed watermark lookup is logged and falls back to full history.
-    class _BadEngine:
-        def connect(self):
-            raise RuntimeError("db down")
-
-    monkeypatch.setattr(incremental, "get_engine", lambda: _BadEngine())
-    assert incremental.get_last_loaded_date("AAPL") is None
-
-
 def test_next_start_date_none_on_connection_error(monkeypatch):
     class _BadEngine:
         def connect(self):
             raise RuntimeError("db down")
 
     monkeypatch.setattr(incremental, "get_engine", lambda: _BadEngine())
-    assert incremental.next_start_date("AAPL") is None
+
+    with pytest.raises(RuntimeError, match="db down"):
+        incremental.next_start_date("AAPL")
+
+def test_get_last_loaded_date_raises_on_connection_error(monkeypatch):
+    class _BadEngine:
+        def connect(self):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        incremental,
+        "get_engine",
+        lambda: _BadEngine()
+    )
+
+    with pytest.raises(RuntimeError, match="db down"):
+        incremental.get_last_loaded_date("AAPL")
